@@ -1,83 +1,112 @@
 # ~/Code/gestura/app.py
-import tkinter as tk
-from PIL import Image, ImageTk
 import cv2
-import numpy as np
-
+import time
 from hand_tracker import HandTracker
 from gesture_recognizer import GestureRecognizer
 from renderer import Renderer
+from action_executor import ActionExecutor
+from gesture_stabilizer import GestureStabilizer
 
-# --- Constants ---
-PIP_WIDTH = 320
-PIP_HEIGHT = 240
+ACTION_COOLDOWN = 1.0 # seconds
 
-class App(tk.Tk):
-    def __init__(self):
-        super().__init__()
-
-        # --- Window Setup ---
-        self.title("Gestura PiP")
-        self.overrideredirect(True)  # Create a borderless window
-        self.wm_attributes("-topmost", True) # Keep it always on top
-
-        # Position the window in the top-right corner
-        screen_width = self.winfo_screenwidth()
-        x_pos = screen_width - PIP_WIDTH - 20 # 20px margin
-        y_pos = 20
-        self.geometry(f"{PIP_WIDTH}x{PIP_HEIGHT}+{x_pos}+{y_pos}")
-
-        # --- Gestura Setup ---
+class App:
+    def __init__(self, debug=False):
+        self.debug = debug
         self.cap = cv2.VideoCapture(0)
         if not self.cap.isOpened():
             raise IOError("Cannot open webcam")
 
         self.hand_tracker = HandTracker()
         self.gesture_recognizer = GestureRecognizer()
+        self.action_executor = ActionExecutor()
         self.renderer = Renderer()
+        
+        # We need a separate stabilizer for each potential hand
+        self.stabilizers = [GestureStabilizer(), GestureStabilizer()]
 
-        # --- Tkinter UI ---
-        self.canvas = tk.Label(self)
-        self.canvas.pack()
+        self.last_action_gesture = None
+        self.last_action_time = 0
 
-        # Start the main loop
-        self.update_frame()
-
-    def update_frame(self):
-        """The main application loop."""
+    def _process_frame(self):
+        """Processes a single frame for gestures, logging, and returns data for rendering."""
         success, frame = self.cap.read()
         if not success:
-            self.after(10, self.update_frame)
-            return
+            return None, None, []
 
-        # --- Core Logic ---
         results, processed_frame = self.hand_tracker.process_frame(frame)
-        
-        # Create the small black background for our PiP window
-        pip_background = np.zeros((PIP_HEIGHT, PIP_WIDTH, 3), dtype=np.uint8)
-        
-        # Scale landmarks to the PiP window size
-        # (This is a simplified approach, MediaPipe drawing handles it)
-        display_frame = self.renderer.draw(pip_background, results)
+        hands_data = []
 
-        # --- Display in Tkinter ---
-        # Convert the OpenCV (BGR) image to a PIL (RGB) image
-        img = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
-        img_pil = Image.fromarray(img)
-        img_tk = ImageTk.PhotoImage(image=img_pil)
+        if results.multi_hand_landmarks:
+            for i, hand_landmarks in enumerate(results.multi_hand_landmarks):
+                # Ensure we don't process more hands than we have stabilizers for
+                if i >= len(self.stabilizers):
+                    break
 
-        self.canvas.imgtk = img_tk
-        self.canvas.configure(image=img_tk)
+                handedness = results.multi_handedness[i].classification[0].label
+                # Pass handedness to the definitive recognizer
+                raw_gesture, finger_states = self.gesture_recognizer.recognize(hand_landmarks, handedness)
+                stable_gesture = self.stabilizers[i].update(raw_gesture)
 
-        # Schedule the next update
-        self.after(10, self.update_frame)
+                print(f"Hand {i} ({handedness}) | Raw: {raw_gesture} -> Stable: {stable_gesture}")
+
+                hands_data.append({
+                    "handedness": handedness,
+                    "raw_gesture": raw_gesture,
+                    "stable_gesture": stable_gesture,
+                    "states": finger_states
+                })
+            
+            # --- Action Execution Logic (uses the STABLE gesture of the first detected hand) ---
+            if hands_data:
+                first_hand_stable_gesture = hands_data[0]["stable_gesture"]
+                current_time = time.time()
+
+                if first_hand_stable_gesture and \
+                   (first_hand_stable_gesture != self.last_action_gesture or \
+                   (current_time - self.last_action_time > ACTION_COOLDOWN)):
+                    
+                    self.action_executor.execute(first_hand_stable_gesture)
+                    self.last_action_gesture = first_hand_stable_gesture
+                    self.last_action_time = current_time
+                
+                # Reset if the stable gesture disappears
+                if not first_hand_stable_gesture:
+                    self.last_action_gesture = None
+
+
+        return results, processed_frame, hands_data
 
     def run(self):
-        """Starts the Tkinter main loop."""
-        print("Starting Gestura PiP. Close the window or press Ctrl+C to quit.")
-        self.mainloop()
+        """The main application loop."""
+        if self.debug:
+            print("Running in DEBUG mode. Press 'q' in the window to quit.")
+        else:
+            print("Running in HEADLESS mode. Press Ctrl+C to quit.")
+
+        while True:
+            try:
+                results, frame, hands_data = self._process_frame()
+                if frame is None:
+                    break
+
+                if self.debug:
+                    display_frame = self.renderer.draw(frame, results, hands_data)
+                    cv2.imshow("Gestura - Debug", display_frame)
+                    
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
+                else:
+                    # Headless mode needs a small sleep to avoid 100% CPU
+                    time.sleep(0.01)
+
+            except KeyboardInterrupt:
+                break
+        
+        self._cleanup()
 
     def _cleanup(self):
-        print("Closing camera...")
+        print("\nClosing camera and windows...")
         self.cap.release()
         self.hand_tracker.close()
+        if self.debug:
+            cv2.destroyAllWindows()

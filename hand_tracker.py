@@ -1,5 +1,8 @@
+# ~/Code/gestura/hand_tracker.py
 import cv2
 import mediapipe as mp
+# We don't strictly need HandLandmark here, but if we ever wanted to
+# reference a specific landmark, this is the clean way to do it.
 
 class HandTracker:
     def __init__(self, min_detection_confidence=0.7, min_tracking_confidence=0.7, max_num_hands=2):
@@ -10,7 +13,6 @@ class HandTracker:
         )
 
     def process_frame(self, image):
-        # Flip, convert color, and process the frame
         image = cv2.flip(image, 1)
         rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         rgb_image.flags.writeable = False
