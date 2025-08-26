@@ -50,5 +50,28 @@
         "pinky": "extended"
       }
     }
+  },
+  "zain": {
+    "conditions": {
+      "handedness": "right",
+      "direction": "up",
+      "fingers": {
+        "thumb": "extended",
+        "middle": "extended"
+      }
+    }
+  },
+  "thumbsup": {
+    "conditions": {
+      "handedness": "right",
+      "direction": "left",
+      "fingers": {
+        "thumb": "extended",
+        "index": "curled",
+        "middle": "curled",
+        "ring": "curled",
+        "pinky": "curled"
+      }
+    }
   }
 }
