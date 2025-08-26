@@ -317,7 +317,7 @@ func (a *App) recognizeGesture(hand HandData) (string, HandState) {
 }
 
 // ##################################################################
-// #                       HERE IS THE FIX                          #
+// #                       FINAL CORRECTED LOGIC                    #
 // ##################################################################
 func getHandState(hand HandData) HandState {
 	lms := hand.Landmarks
@@ -325,11 +325,15 @@ func getHandState(hand HandData) HandState {
 
 	var isPalmFacing bool
 	if handedness == "right" {
-		// For a right hand in a mirrored view, palm is facing camera if index MCP has a LARGER x-coord than pinky MCP
-		isPalmFacing = lms[landmark.INDEX_FINGER_MCP].X > lms[landmark.PINKY_MCP].X
-	} else {
-		// For a left hand, palm is facing camera if index MCP has a SMALLER x-coord than pinky MCP
+		// In a MIRRORED view, the user's right hand appears as a left hand.
+		// The palm faces the camera when the index MCP (landmark 5) has a SMALLER x-coordinate
+		// than the pinky MCP (landmark 17).
 		isPalmFacing = lms[landmark.INDEX_FINGER_MCP].X < lms[landmark.PINKY_MCP].X
+	} else { // handedness == "left"
+		// In a MIRRORED view, the user's left hand appears as a right hand.
+		// The palm faces the camera when the index MCP has a LARGER x-coordinate
+		// than the pinky MCP.
+		isPalmFacing = lms[landmark.INDEX_FINGER_MCP].X > lms[landmark.PINKY_MCP].X
 	}
 
 	orientation := "back"

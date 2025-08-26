@@ -51,12 +51,26 @@
       }
     }
   },
-  "zain": {
+  "gun_ready": {
+    "conditions": {
+      "handedness": "right",
+      "direction": "left",
+      "orientation": "back",
+      "fingers": {
+        "thumb": "extended",
+        "index": "extended",
+        "middle": "extended"
+      }
+    }
+  },
+  "gun_fired": {
     "conditions": {
       "handedness": "right",
       "direction": "up",
+      "orientation": "back",
       "fingers": {
         "thumb": "extended",
+        "index": "extended",
         "middle": "extended"
       }
     }
