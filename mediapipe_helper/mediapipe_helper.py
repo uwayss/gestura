@@ -1,16 +1,18 @@
-# mediapipe_helper.py
+# mediapipe_helper/mediapipe_helper.py
 import sys
 import json
 import cv2
 import mediapipe as mp
 import base64
 import argparse
+import struct
+
+def print_json_error(message):
+    """Sends errors as JSON, as Go might still be expecting it on failure."""
+    print(json.dumps({'error': message}))
+    sys.stdout.flush()
 
 def main(is_debug=False):
-    """
-    Initializes MediaPipe, captures video, and prints hand landmark data as JSON to stdout.
-    If is_debug is True, it also base64 encodes the video frame and includes it in the output.
-    """
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print_json_error("Cannot open webcam")
@@ -22,12 +24,14 @@ def main(is_debug=False):
         max_num_hands=2
     )
 
+    # Use stdout's binary buffer for writing raw bytes
+    stdout_buffer = sys.stdout.buffer
+
     while cap.isOpened():
         success, image = cap.read()
         if not success:
             continue
 
-        # Flip for selfie view, then convert for mediapipe
         flipped_image = cv2.flip(image, 1)
         rgb_image = cv2.cvtColor(flipped_image, cv2.COLOR_BGR2RGB)
         
@@ -35,38 +39,43 @@ def main(is_debug=False):
         results = hands.process(rgb_image)
         rgb_image.flags.writeable = True
 
-        output_data = {'hands': []}
+        num_hands = 0
+        if results.multi_hand_landmarks:
+            num_hands = len(results.multi_hand_landmarks)
+        
+        # --- BINARY PROTOCOL ---
+        # 1. Pack and write the number of hands detected
+        stdout_buffer.write(struct.pack('<B', num_hands))
 
-        # Add base64 encoded frame if in debug mode
+        # 2. For each hand, pack and write its data
+        if num_hands > 0:
+            for hand_landmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
+                # Handedness: 'L' or 'R'
+                hand_char = handedness.classification[0].label[0].encode('ascii')
+                stdout_buffer.write(struct.pack('<c', hand_char))
+                # Landmarks: 21 landmarks * 3 coordinates (x, y, z) = 63 floats
+                for lm in hand_landmarks.landmark:
+                    stdout_buffer.write(struct.pack('<fff', lm.x, lm.y, lm.z))
+
+        # 3. In debug mode, send the frame separately after a magic number delimiter
         if is_debug:
             _, buffer = cv2.imencode('.jpg', flipped_image)
-            output_data['frame'] = base64.b64encode(buffer).decode('utf-8')
+            frame_bytes = buffer.tobytes()
+            # Write a magic number and the size of the upcoming frame
+            stdout_buffer.write(b'FRAME')
+            stdout_buffer.write(struct.pack('<I', len(frame_bytes)))
+            stdout_buffer.write(frame_bytes)
 
-        if results.multi_hand_landmarks:
-            for hand_landmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
-                landmarks_list = []
-                for lm in hand_landmarks.landmark:
-                    landmarks_list.append({'x': lm.x, 'y': lm.y, 'z': lm.z})
+        # Flush the buffer to ensure Go receives the data immediately
+        stdout_buffer.flush()
 
-                hand_data = {
-                    'handedness': handedness.classification[0].label,
-                    'landmarks': landmarks_list
-                }
-                output_data['hands'].append(hand_data)
-        
-        print(json.dumps(output_data))
-        sys.stdout.flush()
 
     hands.close()
     cap.release()
 
-def print_json_error(message):
-    print(json.dumps({'error': message}))
-    sys.stdout.flush()
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--debug', action='store_true', help='Include base64 video frame in output.')
+    parser.add_argument('--debug', action='store_true', help='Include binary video frame in output.')
     args = parser.parse_args()
 
     try:

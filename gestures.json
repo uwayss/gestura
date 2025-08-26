@@ -51,6 +51,18 @@
       }
     }
   },
+  "okay": {
+    "conditions": {
+      "orientation": "front",
+      "fingers": {
+        "thumb": "extended",
+        "index": "curled",
+        "middle": "extended",
+        "ring": "extended",
+        "pinky": "extended"
+      }
+    }
+  },
   "gun_ready": {
     "conditions": {
       "handedness": "right",

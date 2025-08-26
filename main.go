@@ -2,8 +2,7 @@ package main
 
 import (
 	"bufio"
-	"encoding/base64"
-	"encoding/json"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"image"
@@ -19,6 +18,8 @@ import (
 	"syscall"
 	"time"
 
+	"encoding/json" // Keep for error parsing
+
 	"github.com/gen2brain/beeep"
 	"gocv.io/x/gocv"
 )
@@ -30,49 +31,37 @@ const (
 	confirmationThreshold = 2 // Frames
 )
 
-// --- Data Structures for MediaPipe Output ---
-
+// --- Data Structures for Landmark Data ---
 type Landmark struct {
-	X float64 `json:"x"`
-	Y float64 `json:"y"`
-	Z float64 `json:"z"`
+	X float32 `json:"x"` // Using float32 to match Python's 'f' struct pack
+	Y float32 `json:"y"`
+	Z float32 `json:"z"`
 }
 
 type HandData struct {
-	Handedness string     `json:"handedness"`
-	Landmarks  []Landmark `json:"landmarks"`
+	Handedness string
+	Landmarks  [21]Landmark
 }
 
-type MediaPipeOutput struct {
-	Hands []HandData `json:"hands"`
-	Frame string     `json:"frame,omitempty"` // Base64 encoded frame for debug
-	Error string     `json:"error,omitempty"`
-}
-
-// --- Data Structures for Gesture Recognition ---
-
+// --- Data Structures for Gesture Recognition (Unchanged) ---
 type FingerStateMap map[string]string
-
 type HandState struct {
 	Handedness  string
 	Orientation string
 	Direction   string
 	Fingers     FingerStateMap
 }
-
 type GestureConditions struct {
 	Handedness  string         `json:"handedness,omitempty"`
 	Orientation string         `json:"orientation,omitempty"`
 	Direction   string         `json:"direction,omitempty"`
 	Fingers     FingerStateMap `json:"fingers,omitempty"`
 }
-
 type GestureDefinition struct {
 	Conditions GestureConditions `json:"conditions"`
 }
 
 // --- Main Application Struct ---
-
 type App struct {
 	debugMode         bool
 	pythonCmd         *exec.Cmd
@@ -84,7 +73,7 @@ type App struct {
 	lastActionTime    time.Time
 	lastActionGesture string
 	lastStableGesture string
-	webcam            *gocv.Window
+	window            *gocv.Window
 }
 
 func NewApp(debug bool) (*App, error) {
@@ -112,10 +101,80 @@ func NewApp(debug bool) (*App, error) {
 	}
 
 	if debug {
-		app.webcam = gocv.NewWindow("Gestura - Go Debug")
+		app.window = gocv.NewWindow("Gestura - Go Binary Debug")
 	}
 
 	return app, nil
+}
+
+// --- Binary Data Reader ---
+func readBinaryOutput(reader *bufio.Reader, isDebug bool) ([]HandData, []byte, error) {
+	// 1. Read number of hands
+	numHandsByte, err := reader.ReadByte()
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not read num_hands: %w", err)
+	}
+	numHands := int(numHandsByte)
+	if numHands == 0 {
+		// Read frame data if debug mode, even if no hands
+		if isDebug {
+			frameData, _ := readFrameData(reader)
+			return nil, frameData, nil
+		}
+		return nil, nil, nil
+	}
+
+	hands := make([]HandData, numHands)
+	for i := 0; i < numHands; i++ {
+		// 2. Read handedness
+		handednessByte, err := reader.ReadByte()
+		if err != nil {
+			return nil, nil, fmt.Errorf("could not read handedness for hand %d: %w", i, err)
+		}
+		if handednessByte == 'L' {
+			hands[i].Handedness = "Left"
+		} else {
+			hands[i].Handedness = "Right"
+		}
+
+		// 3. Read all 21 landmarks at once
+		err = binary.Read(reader, binary.LittleEndian, &hands[i].Landmarks)
+		if err != nil {
+			return nil, nil, fmt.Errorf("could not read landmarks for hand %d: %w", i, err)
+		}
+	}
+
+	// 4. Read optional frame data in debug mode
+	var frameData []byte
+	if isDebug {
+		frameData, err = readFrameData(reader)
+		if err != nil && err != io.EOF { // Ignore EOF if it happens after frame
+			log.Printf("Warning: could not read full frame data: %v", err)
+		}
+	}
+
+	return hands, frameData, nil
+}
+
+func readFrameData(reader *bufio.Reader) ([]byte, error) {
+	magic := make([]byte, 5)
+	if _, err := io.ReadFull(reader, magic); err != nil {
+		return nil, err
+	}
+	if string(magic) != "FRAME" {
+		return nil, nil // No frame data sent
+	}
+
+	var frameLen uint32
+	if err := binary.Read(reader, binary.LittleEndian, &frameLen); err != nil {
+		return nil, fmt.Errorf("could not read frame length: %w", err)
+	}
+
+	frameData := make([]byte, frameLen)
+	if _, err := io.ReadFull(reader, frameData); err != nil {
+		return nil, fmt.Errorf("could not read frame data bytes: %w", err)
+	}
+	return frameData, nil
 }
 
 func (a *App) Run() {
@@ -137,46 +196,37 @@ func (a *App) Run() {
 		fmt.Println("Running in HEADLESS mode. Press Ctrl+C to quit.")
 	}
 
-	scanner := bufio.NewScanner(a.pythonStdout)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024)
-
+	reader := bufio.NewReader(a.pythonStdout)
 	img := gocv.NewMat()
 	defer img.Close()
 
-	for scanner.Scan() {
-		var output MediaPipeOutput
-		if err := json.Unmarshal(scanner.Bytes(), &output); err != nil {
-			log.Printf("Error unmarshalling JSON from Python: %v", err)
+	for {
+		hands, frameData, err := readBinaryOutput(reader, a.debugMode)
+		if err != nil {
+			if err == io.EOF {
+				fmt.Println("Python helper process exited.")
+				break
+			}
+			log.Printf("Error reading from python helper: %v", err)
 			continue
 		}
 
-		if output.Error != "" {
-			log.Printf("Error from Python script: %s", output.Error)
-			break
-		}
-
 		if a.debugMode {
-			if output.Frame != "" {
-				frameBytes, err := base64.StdEncoding.DecodeString(output.Frame)
-				if err != nil {
-					log.Printf("Error decoding base64 frame: %v", err)
-					continue
-				}
-				img, err = gocv.IMDecode(frameBytes, gocv.IMReadColor)
+			if len(frameData) > 0 {
+				img, err = gocv.IMDecode(frameData, gocv.IMReadColor)
 				if err != nil {
 					log.Printf("Error decoding image bytes: %v", err)
 					continue
 				}
 			} else {
+				// Fallback if frame isn't sent
 				img = gocv.NewMatWithSize(480, 640, gocv.MatTypeCV8UC3)
 			}
 		}
 
 		var handsForRenderer []HandRenderData
-
-		if len(output.Hands) > 0 {
-			primaryHand := output.Hands[0]
+		if len(hands) > 0 {
+			primaryHand := hands[0]
 			stabilizer := a.stabilizers[0]
 			rawGesture, _ := a.recognizeGesture(primaryHand)
 			stableGesture := stabilizer.Update(rawGesture)
@@ -191,15 +241,13 @@ func (a *App) Run() {
 			}
 
 			if a.debugMode {
-				for i, hand := range output.Hands {
+				for i, hand := range hands {
 					if i >= len(a.stabilizers) {
 						break
 					}
 					hRaw, hState := a.recognizeGesture(hand)
 					hStable := a.stabilizers[i].Update(hRaw)
-					handsForRenderer = append(handsForRenderer, HandRenderData{
-						HandData: hand, State: hState, RawGesture: hRaw, StableGesture: hStable,
-					})
+					handsForRenderer = append(handsForRenderer, HandRenderData{HandData: hand, State: hState, RawGesture: hRaw, StableGesture: hStable})
 				}
 			}
 		} else {
@@ -212,16 +260,12 @@ func (a *App) Run() {
 		if a.debugMode {
 			if !img.Empty() {
 				DrawDebugInfo(&img, handsForRenderer)
-				a.webcam.IMShow(img)
-				if a.webcam.WaitKey(1) == int('q') {
+				a.window.IMShow(img)
+				if a.window.WaitKey(1) == int('q') {
 					break
 				}
 			}
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Printf("Error reading from python stdout: %v", err)
 	}
 }
 
@@ -244,7 +288,25 @@ func (a *App) startPythonHelper() {
 		log.Fatalf("Error getting stdout pipe: %v", err)
 	}
 	a.pythonStdout = stdout
-	a.pythonCmd.Stderr = os.Stderr
+
+	// Capture stderr to check for Python errors
+	stderr, err := a.pythonCmd.StderrPipe()
+	if err != nil {
+		log.Fatalf("Error getting stderr pipe: %v", err)
+	}
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			// Try to parse as JSON error first
+			line := scanner.Bytes()
+			var pyErr struct{ Error string }
+			if json.Unmarshal(line, &pyErr) == nil && pyErr.Error != "" {
+				log.Printf("Error from Python script: %s", pyErr.Error)
+			} else {
+				log.Printf("Python stderr: %s", string(line))
+			}
+		}
+	}()
 
 	if err := a.pythonCmd.Start(); err != nil {
 		log.Fatalf("Failed to start %s: %v", scriptPath, err)
@@ -280,20 +342,17 @@ func (a *App) Cleanup() {
 	if a.pythonCmd != nil && a.pythonCmd.Process != nil {
 		fmt.Println("Terminating Python helper process...")
 		if err := a.pythonCmd.Process.Kill(); err != nil {
-			log.Printf("Failed to kill Python process: %v", err)
+			// Ignore errors if process already exited
 		}
 		a.pythonCmd.Wait()
 	}
-	if a.debugMode {
-		if a.webcam != nil {
-			a.webcam.Close()
-		}
+	if a.debugMode && a.window != nil {
+		a.window.Close()
 	}
 	fmt.Println("Cleanup complete.")
 }
 
 // --- Gesture Recognizer Logic ---
-
 var allFingers = map[string]bool{"thumb": true, "index": true, "middle": true, "ring": true, "pinky": true}
 var landmark = struct {
 	WRIST, THUMB_TIP, INDEX_FINGER_MCP, MIDDLE_FINGER_MCP, PINKY_MCP,
@@ -304,9 +363,6 @@ var landmark = struct {
 const thumbExtensionThreshold = 1.3
 
 func (a *App) recognizeGesture(hand HandData) (string, HandState) {
-	if len(hand.Landmarks) < 21 {
-		return "", HandState{}
-	}
 	state := getHandState(hand)
 	for name, definition := range a.gestureDefs {
 		if checkConditions(state, definition.Conditions) {
@@ -316,23 +372,14 @@ func (a *App) recognizeGesture(hand HandData) (string, HandState) {
 	return "", state
 }
 
-// ##################################################################
-// #                       FINAL CORRECTED LOGIC                    #
-// ##################################################################
 func getHandState(hand HandData) HandState {
-	lms := hand.Landmarks
+	lms := hand.Landmarks[:] // convert array to slice for functions
 	handedness := strings.ToLower(hand.Handedness)
 
 	var isPalmFacing bool
 	if handedness == "right" {
-		// In a MIRRORED view, the user's right hand appears as a left hand.
-		// The palm faces the camera when the index MCP (landmark 5) has a SMALLER x-coordinate
-		// than the pinky MCP (landmark 17).
 		isPalmFacing = lms[landmark.INDEX_FINGER_MCP].X < lms[landmark.PINKY_MCP].X
 	} else { // handedness == "left"
-		// In a MIRRORED view, the user's left hand appears as a right hand.
-		// The palm faces the camera when the index MCP has a LARGER x-coordinate
-		// than the pinky MCP.
 		isPalmFacing = lms[landmark.INDEX_FINGER_MCP].X > lms[landmark.PINKY_MCP].X
 	}
 
@@ -355,7 +402,7 @@ func getHandState(hand HandData) HandState {
 	}
 	handVecX := lms[landmark.MIDDLE_FINGER_MCP].X - lms[landmark.WRIST].X
 	handVecY := lms[landmark.MIDDLE_FINGER_MCP].Y - lms[landmark.WRIST].Y
-	angle := math.Atan2(-handVecY, handVecX) * 180 / math.Pi
+	angle := math.Atan2(float64(-handVecY), float64(handVecX)) * 180 / math.Pi
 	direction := "left"
 	if -45 <= angle && angle < 45 {
 		direction = "right"
@@ -403,8 +450,7 @@ func getFingerState(lms []Landmark, tip, pip int) string {
 	return "curled"
 }
 
-// --- Stabilizer, Combo Manager, Executor ---
-
+// --- Stabilizer, Combo Manager, Executor (Unchanged) ---
 type GestureStabilizer struct {
 	candidateGesture   string
 	stableGesture      string
@@ -472,7 +518,6 @@ func showNotification(gesture, command string) {
 }
 
 // --- Renderer for Debug Mode ---
-
 type HandRenderData struct {
 	HandData
 	State         HandState
@@ -486,7 +531,7 @@ func DrawDebugInfo(img *gocv.Mat, hands []HandRenderData) {
 	red := color.RGBA{255, 0, 0, 0}
 	for _, hand := range hands {
 		for _, lm := range hand.Landmarks {
-			pt := image.Pt(int(lm.X*float64(img.Cols())), int(lm.Y*float64(img.Rows())))
+			pt := image.Pt(int(lm.X*float32(img.Cols())), int(lm.Y*float32(img.Rows())))
 			gocv.Circle(img, pt, 3, green, -1)
 		}
 		xPos := 50
@@ -523,13 +568,13 @@ func drawText(img *gocv.Mat, text string, pos image.Point, clr color.RGBA) {
 }
 
 // --- Utility Functions ---
-
 func loadJSON[T any](path string) (T, error) {
 	var data T
 	file, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			log.Printf("Warning: Config file not found at '%s'. Returning empty map.", path)
+			// Return a zero-value T, which for maps/slices is nil but usable
 			return data, nil
 		}
 		return data, err
@@ -539,8 +584,8 @@ func loadJSON[T any](path string) (T, error) {
 	}
 	return data, nil
 }
-func dist(p1, p2 Landmark) float64 {
-	return math.Sqrt(math.Pow(p1.X-p2.X, 2) + math.Pow(p1.Y-p2.Y, 2))
+func dist(p1, p2 Landmark) float32 {
+	return float32(math.Sqrt(float64((p1.X-p2.X)*(p1.X-p2.X) + (p1.Y-p2.Y)*(p1.Y-p2.Y))))
 }
 func Coalesce(s ...string) string {
 	for _, v := range s {
@@ -552,7 +597,6 @@ func Coalesce(s ...string) string {
 }
 
 // --- Main Execution ---
-
 func main() {
 	debug := flag.Bool("debug", false, "Enable debug mode to show camera feed with landmarks.")
 	flag.Parse()

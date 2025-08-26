@@ -1,3 +1,4 @@
 {
-  "gun_ready": "amixer -D pulse sset Master toggle"
+  "gun_ready": "amixer -D pulse sset Master toggle",
+  "okay": "amixer -D pulse sset Master toggle"
 }
