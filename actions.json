@@ -1,5 +1,4 @@
 {
-  "FIST": "~/scripts/media-toggle.sh",
-  "ONE": "amixer -D pulse sset Master 5%-",
-  "TWO": "amixer -D pulse sset Master 5%+"
+  "OKAY": "amixer -D pulse sset Master 5%+",
+  "GUN": "amixer -D pulse sset Master 5%-"
 }
