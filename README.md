@@ -61,7 +61,9 @@ Customizing Gestura is done entirely through JSON files. Gesture names are alway
 
 #### 1. Defining Custom Gestures (`gestures.json`)
 
-A gesture is defined by a set of `conditions` that the live hand state must match. You can omit any condition to make the gesture more general.
+A gesture is defined by a set of `conditions` that the live hand state must match. You can omit any top-level condition (like `direction` or `handedness`) to make the gesture more general.
+
+**Finger Matching Rule:** When you define `fingers`, you only need to list the fingers that should be `extended`. Any finger you **do not** specify is automatically required to be `curled` for the gesture to match. This ensures that gestures are precise and don't trigger accidentally.
 
 ```json
 {
@@ -85,16 +87,26 @@ A gesture is defined by a set of `conditions` that the live hand state must matc
         "pinky": "curled"
       }
     }
+  },
+  "point_left": {
+    "conditions": {
+      "direction": "left",
+      "fingers": {
+        "index": "extended"
+      }
+    }
   }
 }
 ```
+
+In the `point_left` example above, the gesture will only be recognized if the `index` finger is extended **and** the `thumb`, `middle`, `ring`, and `pinky` are all curled.
 
 **Available Conditions:**
 
 - `"handedness"`: `"left"` or `"right"`
 - `"orientation"`: `"front"` (palm facing camera) or `"back"` (knuckles facing camera)
-- `"direction"`: `"up"`, `"down"`, `"left"`, or `"right"` (based on the vector from wrist to knuckles)
-- `"fingers"`: An object specifying the required state (`"extended"` or `"curled"`) for one or more fingers (`"thumb"`, `"index"`, `"middle"`, `"ring"`, `"pinky"`).
+- `"direction"`: `"up"`, `"down"`, `"left"`, or `"right"`
+- `"fingers"`: An object specifying the required state (`"extended"` or `"curled"`) for one or more fingers.
 
 #### 2. Mapping Actions to Gestures (`actions.json`)
 
