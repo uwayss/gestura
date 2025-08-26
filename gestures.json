@@ -1,16 +1,54 @@
 {
-  "OKAY": {
-    "thumb": "Extended",
-    "index": "Curled",
-    "middle": "Extended",
-    "ring": "Extended",
-    "pinky": "Extended"
+  "volume_up": {
+    "conditions": {
+      "handedness": "right",
+      "direction": "up",
+      "fingers": {
+        "index": "extended",
+        "middle": "extended"
+      }
+    }
   },
-  "SPIDERMAN": {
-    "thumb": "Curled",
-    "index": "Extended",
-    "middle": "Curled",
-    "ring": "Extended",
-    "pinky": "Extended"
+  "volume_down": {
+    "conditions": {
+      "handedness": "right",
+      "direction": "down",
+      "fingers": {
+        "index": "extended",
+        "middle": "extended"
+      }
+    }
+  },
+  "point_left": {
+    "conditions": {
+      "direction": "left",
+      "orientation": "back",
+      "fingers": {
+        "index": "extended"
+      }
+    }
+  },
+  "fist": {
+    "conditions": {
+      "fingers": {
+        "thumb": "curled",
+        "index": "curled",
+        "middle": "curled",
+        "ring": "curled",
+        "pinky": "curled"
+      }
+    }
+  },
+  "open_palm": {
+    "conditions": {
+      "orientation": "front",
+      "fingers": {
+        "thumb": "extended",
+        "index": "extended",
+        "middle": "extended",
+        "ring": "extended",
+        "pinky": "extended"
+      }
+    }
   }
 }

@@ -4,15 +4,12 @@ A modular, real-time hand gesture recognition system for controlling your comput
 
 ## Features
 
-- **Robust Gesture Recognition:** Uses a rotation-invariant algorithm based on the hand's geometry, providing consistent detection regardless of hand orientation.
-- **Highly Configurable:**
-  - **Custom Gestures:** Define complex gestures like "SPIDERMAN" or "OKAY" in a simple `gestures.json` file without changing any code.
-  - **Custom Actions:** Easily map single gestures or gesture combos (e.g., "ONE-FIST") to any shell command in `actions.json`.
-  - **Tuning:** Adjust sensitivity, cooldowns, and combo timeouts via constants in the code.
-- **Gesture Combos:** Chain simple gestures together to trigger complex actions, preventing accidental triggers.
-- **Headless by Default:** Runs silently in the background, providing subtle, cross-platform desktop notifications on action triggers.
-- **Visual Debug Mode:** A comprehensive debug view (`--debug`) shows the live camera feed, hand landmarks, and the real-time state of each finger.
-- **Stable and Reliable:** A gesture "stabilizer" filters out noisy, instantaneous flickers, ensuring that only deliberate poses trigger actions.
+- **State-Driven Gesture Recognition:** Define gestures based on a combination of hand properties: handedness, palm orientation (front/back), finger direction (up/down/left/right), and individual finger states (curled/extended).
+- **Highly Expressive Configuration:** A simple `gestures.json` allows for creating specific, unambiguous gestures without changing any code.
+- **Gesture Combos:** Chain gestures together (e.g., `volume_up-fist`) to trigger complex actions.
+- **Headless by Default:** Runs silently, providing subtle, cross-platform desktop notifications on action triggers.
+- **Advanced Visual Debug Mode:** A comprehensive debug view (`--debug`) shows the live camera feed, hand landmarks, and the real-time analysis of the hand's state (direction, orientation, etc.), making it easy to create new gestures.
+- **Stable and Reliable:** A gesture "stabilizer" filters out noisy flickers, ensuring only deliberate poses trigger actions.
 
 ## Setup & Installation
 
@@ -32,7 +29,6 @@ A modular, real-time hand gesture recognition system for controlling your comput
     ```
 
 3.  **Install Python Dependencies:**
-    This single command installs everything needed, including the cross-platform notification library.
     ```bash
     pip install -r requirements.txt
     ```
@@ -41,7 +37,7 @@ A modular, real-time hand gesture recognition system for controlling your comput
 
 #### 1. Headless Mode (Default)
 
-Runs silently in the background. It will print detected gestures to the terminal and execute their corresponding commands, sending a brief desktop notification for feedback.
+Runs silently in the background, executing commands and sending a brief desktop notification for feedback.
 
 ```bash
 python3 main.py
@@ -51,7 +47,7 @@ Press `Ctrl+C` to stop.
 
 #### 2. Debug Mode
 
-Launches a window showing the live camera feed with landmarks and detailed debug information.
+Launches a window showing the live camera feed with detailed state analysis for each hand. This mode is essential for defining and testing new gestures.
 
 ```bash
 python3 main.py --debug
@@ -61,44 +57,55 @@ Press `q` while the window is active to quit.
 
 ## Configuration
 
-Customizing Gestura is done entirely through JSON files.
+Customizing Gestura is done entirely through JSON files. Gesture names are always lowercase.
 
 #### 1. Defining Custom Gestures (`gestures.json`)
 
-Create new gestures by defining the state of each finger. States are `"Extended"` or `"Curled"`.
+A gesture is defined by a set of `conditions` that the live hand state must match. You can omit any condition to make the gesture more general.
 
 ```json
 {
-  "SPIDERMAN": {
-    "thumb": "Extended",
-    "index": "Extended",
-    "middle": "Curled",
-    "ring": "Curled",
-    "pinky": "Extended"
+  "volume_up": {
+    "conditions": {
+      "handedness": "right",
+      "direction": "up",
+      "fingers": {
+        "index": "extended",
+        "middle": "extended"
+      }
+    }
   },
-  "OKAY": {
-    "thumb": "Extended",
-    "index": "Extended",
-    "middle": "Curled",
-    "ring": "Curled",
-    "pinky": "Curled"
+  "fist": {
+    "conditions": {
+      "fingers": {
+        "thumb": "curled",
+        "index": "curled",
+        "middle": "curled",
+        "ring": "curled",
+        "pinky": "curled"
+      }
+    }
   }
 }
 ```
 
-**Note:** It's best to avoid using hyphens (`-`) in gesture names, as this character is used to define combos in `actions.json`.
+**Available Conditions:**
+
+- `"handedness"`: `"left"` or `"right"`
+- `"orientation"`: `"front"` (palm facing camera) or `"back"` (knuckles facing camera)
+- `"direction"`: `"up"`, `"down"`, `"left"`, or `"right"` (based on the vector from wrist to knuckles)
+- `"fingers"`: An object specifying the required state (`"extended"` or `"curled"`) for one or more fingers (`"thumb"`, `"index"`, `"middle"`, `"ring"`, `"pinky"`).
 
 #### 2. Mapping Actions to Gestures (`actions.json`)
 
-Link a recognized gesture name (either a default, a custom one, or a combo) to a shell command. For combos, join gesture names with a hyphen.
+Link a recognized gesture name (or a combo) to a shell command.
 
 ```json
 {
-  "FIST": "~/scripts/media-toggle.sh",
-  "ONE": "amixer -D pulse sset Master 5%-",
-  "TWO": "amixer -D pulse sset Master 5%+",
-  "SPIDERMAN": "gnome-screenshot",
-  "ONE-FIST": "xdotool key super+l"
+  "fist": "~/scripts/media-toggle.sh",
+  "volume_down": "amixer -D pulse sset Master 5%-",
+  "volume_up": "amixer -D pulse sset Master 5%+",
+  "volume_up-fist": "xdotool key super+l"
 }
 ```
 
@@ -106,6 +113,6 @@ Link a recognized gesture name (either a default, a custom one, or a combo) to a
 
 You can fine-tune responsiveness by editing constants at the top of these files:
 
-- `gesture_stabilizer.py`: Change `CONFIRMATION_THRESHOLD` to control how long a gesture must be held.
-- `combo_manager.py`: Change `COMBO_TIMEOUT` to set the max time between gestures in a combo.
-- `app.py`: Change `ACTION_COOLDOWN` to set the minimum time between single gesture actions.
+- `gesture_stabilizer.py`: `CONFIRMATION_THRESHOLD`
+- `combo_manager.py`: `COMBO_TIMEOUT`
+- `app.py`: `ACTION_COOLDOWN`

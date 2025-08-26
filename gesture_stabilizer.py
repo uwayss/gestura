@@ -2,7 +2,7 @@
 
 # How many consecutive frames a gesture must be detected before it's considered "stable".
 # A higher number means less sensitivity but more delay. 5 is a good starting point.
-CONFIRMATION_THRESHOLD = 5
+CONFIRMATION_THRESHOLD = 1
 
 class GestureStabilizer:
     def __init__(self):
