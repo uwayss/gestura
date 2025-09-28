@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/binary"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"image"
@@ -14,11 +15,10 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
-
-	"encoding/json" // Keep for error parsing
 
 	"github.com/gen2brain/beeep"
 	"gocv.io/x/gocv"
@@ -270,8 +270,16 @@ func (a *App) Run() {
 }
 
 func (a *App) startPythonHelper() {
-	venvPython := "mediapipe_helper/venv/bin/python"
-	scriptPath := "mediapipe_helper/mediapipe_helper.py"
+	var venvPython string
+	scriptPath := filepath.Join("mediapipe_helper", "mediapipe_helper.py")
+
+	if runtime.GOOS == "windows" {
+		// On Windows, the executable is in the Scripts folder and ends with .exe
+		venvPython = filepath.Join("mediapipe_helper", "venv", "Scripts", "python.exe")
+	} else {
+		// On Linux and macOS, it's in the bin folder
+		venvPython = filepath.Join("mediapipe_helper", "venv", "bin", "python")
+	}
 
 	if _, err := os.Stat(venvPython); os.IsNotExist(err) {
 		log.Fatalf("Python executable not found at %s. Did you run the setup commands?", venvPython)

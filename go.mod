@@ -1,6 +1,6 @@
 module github.com/uwayss/gestura
 
-go 1.24.5
+go 1.25.1
 
 require (
 	github.com/gen2brain/beeep v0.11.1
